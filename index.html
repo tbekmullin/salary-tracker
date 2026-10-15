@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Трекер доходов и расходов</title>
+  <link rel="stylesheet" href="main.css">
+</head>
+<body>
+  <header class="header">
+    <div class="header__inner">
+      <div class="logo">💰 <span>Финансы</span></div>
+      <nav class="nav" id="nav">
+        <a href="#dashboard" data-tab="dashboard">Дэшборд</a>
+        <a href="#analytics" data-tab="analytics">Аналитика</a>
+        <a href="#transactions" data-tab="transactions">Операции</a>
+        <a href="#categories" data-tab="categories">Категории</a>
+        <a href="#settings" data-tab="settings">Настройки</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- ===== Дэшборд ===== -->
+    <section class="tab" id="tab-dashboard">
+      <div class="toolbar">
+        <h1>Дэшборд</h1>
+        <div class="toolbar__actions">
+          <select id="periodSelect" class="input" aria-label="Период">
+            <option value="month">Этот месяц</option>
+            <option value="prevMonth">Прошлый месяц</option>
+            <option value="year">Этот год</option>
+            <option value="all">Всё время</option>
+          </select>
+          <button class="btn btn--primary" data-action="add-transaction">+ Добавить операцию</button>
+        </div>
+      </div>
+
+      <div class="kpi">
+        <div class="card kpi__item kpi__item--income">
+          <div class="kpi__label">Доходы</div>
+          <div class="kpi__value" id="kpiIncome">0</div>
+        </div>
+        <div class="card kpi__item kpi__item--expense">
+          <div class="kpi__label">Расходы</div>
+          <div class="kpi__value" id="kpiExpense">0</div>
+        </div>
+        <div class="card kpi__item kpi__item--balance">
+          <div class="kpi__label">Баланс</div>
+          <div class="kpi__value" id="kpiBalance">0</div>
+        </div>
+      </div>
+
+      <div class="charts">
+        <div class="card chart-card chart-card--wide">
+          <h2>Доходы и расходы по месяцам</h2>
+          <div class="chart-box"><canvas id="chartMonthly"></canvas></div>
+        </div>
+        <div class="card chart-card">
+          <h2>Расходы по категориям</h2>
+          <div class="chart-box"><canvas id="chartCategories"></canvas></div>
+          <p class="empty" id="chartCategoriesEmpty" hidden>Нет расходов за период</p>
+        </div>
+        <div class="card chart-card">
+          <h2>Динамика баланса</h2>
+          <div class="chart-box"><canvas id="chartBalance"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head">
+          <h2>Последние операции</h2>
+          <a href="#transactions" class="link">Все операции →</a>
+        </div>
+        <ul class="recent" id="recentList"></ul>
+      </div>
+    </section>
+
+    <!-- ===== Аналитика ===== -->
+    <section class="tab" id="tab-analytics" hidden>
+      <div class="toolbar">
+        <div>
+          <h1>Аналитика</h1>
+          <p class="hint" id="anSubtitle"></p>
+        </div>
+        <select id="anMonth" class="input" aria-label="Месяц анализа"></select>
+      </div>
+
+      <div class="kpi kpi--4">
+        <div class="card kpi__item kpi__item--balance">
+          <div class="kpi__label">Норма сбережений</div>
+          <div class="kpi__value" id="anSavings">—</div>
+          <div class="kpi__sub" id="anSavingsSub"></div>
+        </div>
+        <div class="card kpi__item kpi__item--expense">
+          <div class="kpi__label">Расход в день</div>
+          <div class="kpi__value" id="anDaily">—</div>
+          <div class="kpi__sub" id="anDailySub"></div>
+        </div>
+        <div class="card kpi__item kpi__item--forecast">
+          <div class="kpi__label">Прогноз на текущий месяц</div>
+          <div class="kpi__value" id="anForecast">—</div>
+          <div class="kpi__sub" id="anForecastSub"></div>
+        </div>
+        <div class="card kpi__item kpi__item--income">
+          <div class="kpi__label">Финансовая подушка</div>
+          <div class="kpi__value" id="anCushion">—</div>
+          <div class="kpi__sub" id="anCushionSub"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Рекомендации</h2>
+        <ul class="recs" id="recList"></ul>
+      </div>
+
+      <div class="an-columns">
+        <div class="card">
+          <h2>Правило 50/30/20</h2>
+          <p class="hint">Ориентир: 50% дохода — на необходимое, 30% — на желания, 20% — в сбережения.</p>
+          <div class="split-bar" id="splitBar"></div>
+          <ul class="split-legend" id="splitLegend"></ul>
+        </div>
+        <div class="card table-wrap">
+          <h2 class="table-title">Расходы по категориям к среднему</h2>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Категория</th>
+                <th class="num" id="anColMonth">Месяц</th>
+                <th class="num">Среднее за 3 мес.</th>
+                <th class="num">Изменение</th>
+              </tr>
+            </thead>
+            <tbody id="anTrendBody"></tbody>
+          </table>
+          <p class="empty" id="anTrendEmpty" hidden>Нет расходов за этот месяц</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Операции ===== -->
+    <section class="tab" id="tab-transactions" hidden>
+      <div class="toolbar">
+        <h1>Операции</h1>
+        <button class="btn btn--primary" data-action="add-transaction">+ Добавить операцию</button>
+      </div>
+
+      <div class="card filters">
+        <select id="fType" class="input" aria-label="Тип">
+          <option value="all">Все типы</option>
+          <option value="income">Доходы</option>
+          <option value="expense">Расходы</option>
+        </select>
+        <select id="fCategory" class="input" aria-label="Категория">
+          <option value="all">Все категории</option>
+        </select>
+        <input type="date" id="fFrom" class="input" aria-label="С даты">
+        <input type="date" id="fTo" class="input" aria-label="По дату">
+        <input type="search" id="fSearch" class="input" placeholder="Поиск по заметке">
+        <select id="fSort" class="input" aria-label="Сортировка">
+          <option value="date-desc">Сначала новые</option>
+          <option value="date-asc">Сначала старые</option>
+          <option value="amount-desc">Сумма ↓</option>
+          <option value="amount-asc">Сумма ↑</option>
+        </select>
+        <button class="btn btn--ghost" id="fReset">Сбросить</button>
+      </div>
+
+      <div class="card table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>Категория</th>
+              <th>Заметка</th>
+              <th class="num">Сумма</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="txBody"></tbody>
+        </table>
+        <p class="empty" id="txEmpty" hidden>Операций не найдено</p>
+        <div class="table-foot" id="txTotal"></div>
+      </div>
+    </section>
+
+    <!-- ===== Категории ===== -->
+    <section class="tab" id="tab-categories" hidden>
+      <div class="toolbar">
+        <h1>Категории</h1>
+      </div>
+
+      <form class="card cat-form" id="catForm">
+        <input type="hidden" id="catId">
+        <select id="catType" class="input" aria-label="Тип категории">
+          <option value="expense">Расход</option>
+          <option value="income">Доход</option>
+        </select>
+        <input type="text" id="catName" class="input" placeholder="Название категории" maxlength="40" required>
+        <input type="color" id="catColor" class="input input--color" value="#6366f1" aria-label="Цвет">
+        <button type="submit" class="btn btn--primary" id="catSubmit">Добавить</button>
+        <button type="button" class="btn btn--ghost" id="catCancel" hidden>Отмена</button>
+      </form>
+
+      <div class="cat-columns">
+        <div class="card">
+          <h2 class="text-income">Доходы</h2>
+          <ul class="cat-list" id="catListIncome"></ul>
+        </div>
+        <div class="card">
+          <h2 class="text-expense">Расходы</h2>
+          <ul class="cat-list" id="catListExpense"></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Настройки ===== -->
+    <section class="tab" id="tab-settings" hidden>
+      <div class="toolbar">
+        <h1>Настройки</h1>
+      </div>
+
+      <div class="card settings">
+        <h2>Валюта</h2>
+        <label class="field">
+          <span>Валюта отображения</span>
+          <select id="currencySelect" class="input"></select>
+        </label>
+        <p class="hint">Меняется только отображение сумм — курс не пересчитывается.</p>
+      </div>
+
+      <div class="card settings">
+        <h2>Данные</h2>
+        <p class="hint">Все данные хранятся локально в этом браузере (localStorage).</p>
+        <div class="settings__actions">
+          <button class="btn" id="exportBtn">Экспорт в JSON</button>
+          <label class="btn">
+            Импорт из JSON
+            <input type="file" id="importInput" accept="application/json,.json" hidden>
+          </label>
+          <button class="btn btn--danger" id="resetBtn">Удалить все данные</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===== Модальное окно операции ===== -->
+  <div class="modal" id="txModal" hidden>
+    <div class="modal__backdrop" data-close></div>
+    <form class="modal__dialog card" id="txForm" novalidate>
+      <div class="card__head">
+        <h2 id="txModalTitle">Новая операция</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Закрыть">✕</button>
+      </div>
+      <input type="hidden" id="txId">
+
+      <div class="segmented" role="radiogroup">
+        <label><input type="radio" name="txType" value="expense" checked><span>Расход</span></label>
+        <label><input type="radio" name="txType" value="income"><span>Доход</span></label>
+      </div>
+
+      <label class="field">
+        <span>Сумма, <b id="txCurrencyLabel">сум</b></span>
+        <input type="number" id="txAmount" class="input" min="0" step="any" inputmode="decimal" placeholder="0">
+        <small class="error" data-error="amount"></small>
+      </label>
+
+      <label class="field">
+        <span>Категория</span>
+        <select id="txCategory" class="input"></select>
+        <small class="error" data-error="category"></small>
+      </label>
+
+      <label class="field">
+        <span>Дата</span>
+        <input type="date" id="txDate" class="input">
+        <small class="error" data-error="date"></small>
+      </label>
+
+      <label class="field">
+        <span>Заметка</span>
+        <input type="text" id="txNote" class="input" maxlength="120" placeholder="Необязательно">
+      </label>
+
+      <div class="modal__actions">
+        <button type="button" class="btn btn--ghost" data-close>Отмена</button>
+        <button type="submit" class="btn btn--primary">Сохранить</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
