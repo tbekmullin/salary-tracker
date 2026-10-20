@@ -2,7 +2,8 @@
 
 Веб-приложение для учёта личных финансов с аккаунтами и облачным хранением.
 
-**Сайт:** https://salary-tracker-vert-kappa.vercel.app
+**Трекер:** https://salary-tracker-vert-kappa.vercel.app
+**Лендинг:** https://salary-tracker-landing.vercel.app
 
 Фронтенд — три файла без сборки (`index.html`, `main.css`, `script.js`), сервер — функции Vercel в папке `api/`, данные — PostgreSQL в [Neon](https://neon.tech).
 
@@ -40,6 +41,23 @@ db/schema.sql, db/migrate.mjs      схема базы и скрипт её пр
 - Данные пользователя — один JSON-документ (`user_data.data`) с номером версии: если данные изменились
   на другом устройстве, сервер вернёт 409 и актуальную версию, и ничего не затрётся молча.
 - Изменяющие запросы принимаются только со своего домена и только в JSON; на сайт выставлены CSP и другие защитные заголовки.
+
+## Лендинг
+
+Отдельная страница-презентация в папке `landing/`: React + TypeScript на Vite,
+[shadcn/ui](https://ui.shadcn.com) (кнопки, карточки, вкладки, аккордеон), Tailwind CSS 4
+и [motion](https://motion.dev) (бывший framer-motion) для анимаций и параллакса при прокрутке.
+Выкладывается отдельным проектом Vercel `salary-tracker-landing` (Root Directory — `landing`).
+
+```bash
+cd landing
+nvm use            # Node 22
+npm install
+npm run dev        # http://localhost:5173
+npm run build
+```
+
+Анимации учитывают системную настройку «уменьшить движение».
 
 ## Локальный запуск
 
