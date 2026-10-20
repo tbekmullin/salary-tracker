@@ -3,6 +3,18 @@
   "regions": [
     "fra1"
   ],
+  "redirects": [
+    {
+      "source": "/landing",
+      "destination": "https://salary-tracker-landing.vercel.app/",
+      "permanent": false
+    },
+    {
+      "source": "/landing/:path*",
+      "destination": "https://salary-tracker-landing.vercel.app/",
+      "permanent": false
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
