@@ -86,23 +86,16 @@ function toast(message) {
 }
 
 /* =====================================================================
-   Хранилище (localStorage)
+   Старые данные из браузера (до появления аккаунтов)
+   Нужны только для того, чтобы предложить перенести их в аккаунт.
    ===================================================================== */
-const Storage = {
+const LegacyStorage = {
   load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch (e) {
-      console.warn('localStorage недоступен:', e);
       return null;
-    }
-  },
-  save(data) {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch (e) {
-      console.warn('Не удалось сохранить данные:', e);
     }
   },
   clear() {
@@ -135,16 +128,127 @@ function normalizeState(data) {
   return data;
 }
 
-let state = (() => {
-  const loaded = Storage.load();
-  if (!isValidState(loaded)) return createDefaultState();
-  return normalizeState(loaded);
-})();
+// Данные загружаются с сервера после входа
+let state = createDefaultState();
 
 function commit() {
-  Storage.save(state);
+  Cloud.scheduleSave();
   render();
 }
+
+/* =====================================================================
+   Сервер: запросы к API и синхронизация с облаком (Neon)
+   ===================================================================== */
+async function api(path, { method = 'GET', body } = {}) {
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      credentials: 'same-origin',
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    const err = new Error('Нет связи с сервером. Проверьте интернет');
+    err.status = 0;
+    throw err;
+  }
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* пустой ответ */ }
+  if (!res.ok) {
+    const err = new Error((data && data.error) || `Ошибка сервера (${res.status})`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+/**
+ * Изменения копятся и отправляются на сервер одним запросом через 700 мс после
+ * последней правки. version защищает от затирания правок с другого устройства.
+ */
+const Cloud = {
+  user: null,
+  version: 0,
+  timer: null,
+  saving: false,
+  dirty: false,
+  retryTimer: null,
+
+  setStatus(kind) {
+    const labels = {
+      saved: ['Сохранено', 'Все изменения сохранены в облаке'],
+      pending: ['Сохранение…', 'Изменения отправляются на сервер'],
+      error: ['Не сохранено', 'Нет связи с сервером — повторим автоматически'],
+    };
+    const node = $('#syncStatus');
+    node.dataset.state = kind;
+    [node.textContent, node.title] = labels[kind];
+  },
+
+  scheduleSave() {
+    if (!this.user) return;
+    this.dirty = true;
+    this.setStatus('pending');
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), 700);
+  },
+
+  async flush() {
+    if (!this.user || this.saving || !this.dirty) return;
+    clearTimeout(this.timer);
+    clearTimeout(this.retryTimer);
+    this.saving = true;
+    this.dirty = false;
+    try {
+      const res = await api('/api/data', { method: 'PUT', body: { data: state, version: this.version } });
+      this.version = res.version;
+      this.setStatus(this.dirty ? 'pending' : 'saved');
+    } catch (err) {
+      if (err.status === 401) {
+        this.dirty = false;
+        showAuth('Сессия истекла — войдите снова');
+      } else if (err.status === 409) {
+        // На другом устройстве данные уже изменились: берём актуальную версию с сервера
+        state = err.data && isValidState(err.data.data) ? normalizeState(err.data.data) : createDefaultState();
+        this.version = err.data ? err.data.version : 0;
+        this.dirty = false;
+        this.setStatus('saved');
+        render();
+        toast('Данные изменились на другом устройстве — показана актуальная версия');
+      } else {
+        this.dirty = true;
+        this.setStatus('error');
+        if (err.status >= 400 && err.status < 500) toast(err.message);
+        else this.retryTimer = setTimeout(() => this.flush(), 5000);
+      }
+    } finally {
+      this.saving = false;
+      if (this.dirty && $('#syncStatus').dataset.state === 'pending') this.flush();
+    }
+  },
+
+  /** Подтянуть свежие данные, если они изменились на другом устройстве */
+  async refresh() {
+    if (!this.user || this.saving || this.dirty) return;
+    try {
+      const res = await api('/api/data');
+      if (res.version > this.version && isValidState(res.data)) {
+        state = normalizeState(res.data);
+        this.version = res.version;
+        render();
+        toast('Данные обновлены');
+      }
+    } catch (err) {
+      if (err.status === 401) showAuth('Сессия истекла — войдите снова');
+    }
+  },
+
+  hasUnsaved() {
+    return this.dirty || this.saving;
+  },
+};
 
 /* =====================================================================
    CRUD
@@ -323,7 +427,6 @@ const Settings = {
     commit();
   },
   resetAll() {
-    Storage.clear();
     state = createDefaultState();
     commit();
   },
@@ -2105,12 +2208,198 @@ function initCustomSelects() {
 }
 
 /* =====================================================================
+   Аккаунт: вход, регистрация, выход, удаление
+   ===================================================================== */
+function setLocked(locked) {
+  document.body.classList.toggle('is-locked', locked);
+}
+
+function showAuth(message) {
+  Cloud.user = null;
+  closeSelect();
+  $$('.modal').forEach((m) => { m.hidden = true; });
+  $('#bootScreen').hidden = true;
+  $('#authScreen').hidden = false;
+  setLocked(true);
+  $('#authError').textContent = message || '';
+  $('#authPassword').value = '';
+  $('#authConfirm').value = '';
+  setTimeout(() => ($('#authEmail').value ? $('#authPassword') : $('#authEmail')).focus(), 50);
+}
+
+function showApp() {
+  $('#bootScreen').hidden = true;
+  $('#authScreen').hidden = true;
+  setLocked(false);
+  $('#settingsEmail').textContent = Cloud.user.email;
+  $('#accountBox').title = Cloud.user.email;
+  Cloud.setStatus('saved');
+  // Графики, построенные до экрана входа, могли получить неверный размер — строим заново
+  Object.keys(charts).forEach((key) => {
+    charts[key].destroy();
+    delete charts[key];
+  });
+  shownTab = null;
+  switchTab();
+}
+
+/** Загрузка данных аккаунта. Пустому аккаунту предлагаем перенести данные из браузера */
+async function loadAccountData() {
+  const res = await api('/api/data');
+  Cloud.version = res.version;
+  if (isValidState(res.data)) {
+    state = normalizeState(res.data);
+    return;
+  }
+
+  const legacy = LegacyStorage.load();
+  const hasLegacy = isValidState(legacy) && (legacy.transactions.length || (legacy.cards || []).length);
+  if (hasLegacy && confirm(`В этом браузере есть ранее сохранённые данные: ${legacy.transactions.length} операций. Перенести их в ваш аккаунт?`)) {
+    state = normalizeState(legacy);
+    Cloud.dirty = true;
+    await Cloud.flush();
+    if (!Cloud.dirty) {
+      LegacyStorage.clear();
+      toast('Данные перенесены в аккаунт');
+    }
+    return;
+  }
+  state = createDefaultState();
+  Cloud.dirty = true;
+  await Cloud.flush();
+}
+
+async function enterAccount(user) {
+  Cloud.user = user;
+  await loadAccountData();
+  showApp();
+}
+
+async function boot() {
+  if (typeof Chart === 'undefined') {
+    console.warn('Chart.js не загружен — графики недоступны (нет интернета?)');
+  }
+  try {
+    const { user } = await api('/api/auth/me');
+    await enterAccount(user);
+  } catch (err) {
+    showAuth(err.status === 401 ? '' : err.message);
+  }
+}
+
+function getAuthMode() {
+  return document.querySelector('input[name="authMode"]:checked').value;
+}
+
+function updateAuthMode() {
+  const register = getAuthMode() === 'register';
+  $('#authConfirmField').hidden = !register;
+  $('#authSubmit').textContent = register ? 'Создать аккаунт' : 'Войти';
+  $('#authPassword').autocomplete = register ? 'new-password' : 'current-password';
+  $('#authError').textContent = '';
+}
+
+async function handleAuthSubmit(e) {
+  e.preventDefault();
+  const register = getAuthMode() === 'register';
+  const email = $('#authEmail').value.trim();
+  const password = $('#authPassword').value;
+  const error = $('#authError');
+  error.textContent = '';
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { error.textContent = 'Введите корректный email'; return; }
+  if (password.length < 8) { error.textContent = 'Пароль должен быть не короче 8 символов'; return; }
+  if (register && password !== $('#authConfirm').value) { error.textContent = 'Пароли не совпадают'; return; }
+
+  const submit = $('#authSubmit');
+  submit.disabled = true;
+  submit.textContent = register ? 'Создаём аккаунт…' : 'Входим…';
+  let message = '';
+  try {
+    const { user } = await api(register ? '/api/auth/register' : '/api/auth/login', {
+      method: 'POST',
+      body: { email, password },
+    });
+    await enterAccount(user);
+    toast(register ? 'Аккаунт создан' : 'С возвращением!');
+  } catch (err) {
+    message = err.message;
+  } finally {
+    submit.disabled = false;
+    updateAuthMode();
+    error.textContent = message;
+  }
+}
+
+async function logout() {
+  if (Cloud.hasUnsaved()) {
+    await Cloud.flush();
+    if (Cloud.hasUnsaved() && !confirm('Последние изменения ещё не сохранены. Всё равно выйти?')) return;
+  }
+  try { await api('/api/auth/logout', { method: 'POST', body: {} }); } catch (e) { /* всё равно выходим */ }
+  state = createDefaultState();
+  Cloud.version = 0;
+  Cloud.dirty = false;
+  showAuth();
+}
+
+async function handleDeleteAccount(e) {
+  e.preventDefault();
+  const formEl = $('#deleteAccountForm');
+  clearFormErrors(formEl);
+  const password = $('#deletePassword').value;
+  if (!password) { setFormError(formEl, 'password', $('#deletePassword'), 'Введите пароль'); return; }
+  try {
+    await api('/api/auth/me', { method: 'DELETE', body: { password } });
+    closeModal($('#deleteAccountModal'));
+    state = createDefaultState();
+    Cloud.version = 0;
+    Cloud.dirty = false;
+    $('#authEmail').value = '';
+    showAuth();
+    toast('Аккаунт удалён');
+  } catch (err) {
+    setFormError(formEl, 'password', $('#deletePassword'), err.message);
+  }
+}
+
+function bindAuthEvents() {
+  $('#authForm').addEventListener('submit', handleAuthSubmit);
+  $$('input[name="authMode"]').forEach((r) => r.addEventListener('change', updateAuthMode));
+  $('#deleteAccountForm').addEventListener('submit', handleDeleteAccount);
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    if (btn.dataset.action === 'logout') logout();
+    if (btn.dataset.action === 'delete-account') {
+      $('#deleteAccountForm').reset();
+      clearFormErrors($('#deleteAccountForm'));
+      openModal($('#deleteAccountModal'));
+      setTimeout(() => $('#deletePassword').focus(), 50);
+    }
+  });
+
+  // Предупреждение при закрытии вкладки с несохранёнными изменениями
+  window.addEventListener('beforeunload', (e) => {
+    if (Cloud.hasUnsaved()) {
+      Cloud.flush();
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  // Вернулись на вкладку — проверяем, не изменились ли данные на другом устройстве
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') Cloud.refresh();
+  });
+  window.addEventListener('online', () => Cloud.flush());
+}
+
+/* =====================================================================
    Старт
    ===================================================================== */
-if (typeof Chart === 'undefined') {
-  console.warn('Chart.js не загружен — графики недоступны (нет интернета?)');
-}
-Storage.save(state);
 initCustomSelects();
 bindEvents();
-switchTab();
+bindAuthEvents();
+boot();

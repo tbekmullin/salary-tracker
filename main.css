@@ -966,3 +966,90 @@ h2 { font-size: 16px; margin: 0 0 12px; font-weight: 600; }
   .cc-grid { grid-template-columns: minmax(0, 1fr); }
   .field-row { grid-template-columns: minmax(0, 1fr); gap: 0; }
 }
+
+/* ========== Аккаунт и вход ========== */
+.is-locked .header,
+.is-locked .container { display: none; }
+
+.auth {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+
+.auth__card {
+  width: 100%;
+  max-width: 400px;
+  padding: 28px 24px;
+  margin: 0;
+  background: var(--glass-strong);
+  animation: pop .35s cubic-bezier(.2, .8, .2, 1);
+}
+
+.auth__logo { font-size: 26px; font-weight: 800; text-align: center; }
+.auth__lead { text-align: center; margin: 8px 0 20px; }
+
+.auth__tabs input:checked + span { background: var(--primary); color: #fff; }
+
+.auth__error { min-height: 18px; margin: 0 0 12px; font-size: 13px; }
+.auth__submit { width: 100%; padding: 11px 16px; }
+.auth__submit:disabled { opacity: .7; cursor: wait; }
+
+.auth__loading { text-align: center; color: var(--muted); }
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  border: 3px solid var(--primary-soft);
+  border-top-color: var(--primary);
+  animation: spin .8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.account {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.account__logout { padding: 6px 12px; }
+
+.sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.sync::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--income);
+}
+
+.sync[data-state="pending"]::before { background: var(--warning); animation: pulse 1s ease-in-out infinite; }
+.sync[data-state="error"] { color: var(--expense); }
+.sync[data-state="error"]::before { background: var(--expense); }
+
+@keyframes pulse { 50% { opacity: .3; } }
+
+@media (max-width: 640px) {
+  .header__inner { position: relative; }
+  .account { position: absolute; top: 10px; right: 16px; }
+  .sync { font-size: 0; gap: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth__card, .spinner, .sync::before { animation: none; }
+}

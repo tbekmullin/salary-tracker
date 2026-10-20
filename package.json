@@ -1,0 +1,14 @@
+{
+  "name": "salary-tracker",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "db:migrate": "node db/migrate.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.0"
+  }
+}

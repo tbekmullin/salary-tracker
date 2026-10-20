@@ -6,7 +6,45 @@
   <title>Трекер доходов и расходов</title>
   <link rel="stylesheet" href="main.css">
 </head>
-<body>
+<body class="is-locked">
+  <!-- ===== Загрузка ===== -->
+  <div class="auth" id="bootScreen">
+    <div class="auth__loading">
+      <div class="spinner" aria-hidden="true"></div>
+      <p>Загрузка…</p>
+    </div>
+  </div>
+
+  <!-- ===== Вход и регистрация ===== -->
+  <div class="auth" id="authScreen" hidden>
+    <div class="card auth__card">
+      <div class="auth__logo">💰 Финансы</div>
+      <p class="hint auth__lead">Учёт доходов, расходов и кредитных карт. Данные хранятся в вашем аккаунте и доступны с любого устройства.</p>
+
+      <div class="segmented auth__tabs" role="radiogroup" aria-label="Вход или регистрация">
+        <label><input type="radio" name="authMode" value="login" checked><span>Вход</span></label>
+        <label><input type="radio" name="authMode" value="register"><span>Регистрация</span></label>
+      </div>
+
+      <form id="authForm" novalidate>
+        <label class="field">
+          <span>Email</span>
+          <input type="email" id="authEmail" class="input" autocomplete="email" placeholder="you@example.com" required>
+        </label>
+        <label class="field">
+          <span>Пароль</span>
+          <input type="password" id="authPassword" class="input" autocomplete="current-password" placeholder="Не короче 8 символов" required>
+        </label>
+        <label class="field" id="authConfirmField" hidden>
+          <span>Повторите пароль</span>
+          <input type="password" id="authConfirm" class="input" autocomplete="new-password">
+        </label>
+        <p class="error auth__error" id="authError" role="alert"></p>
+        <button type="submit" class="btn btn--primary auth__submit" id="authSubmit">Войти</button>
+      </form>
+    </div>
+  </div>
+
   <header class="header">
     <div class="header__inner">
       <div class="logo">💰 <span>Финансы</span></div>
@@ -18,6 +56,10 @@
         <a href="#categories" data-tab="categories">Категории</a>
         <a href="#settings" data-tab="settings">Настройки</a>
       </nav>
+      <div class="account" id="accountBox">
+        <span class="sync" id="syncStatus" data-state="saved" title="Все изменения сохранены">Сохранено</span>
+        <button class="btn btn--ghost account__logout" data-action="logout" title="Выйти из аккаунта">Выйти</button>
+      </div>
     </div>
   </header>
 
@@ -298,8 +340,18 @@
       </div>
 
       <div class="card settings">
+        <h2>Аккаунт</h2>
+        <p>Вы вошли как <b id="settingsEmail"></b></p>
+        <p class="hint">Данные хранятся в облачной базе и синхронизируются между устройствами после входа.</p>
+        <div class="settings__actions">
+          <button class="btn" data-action="logout">Выйти</button>
+          <button class="btn btn--danger" data-action="delete-account">Удалить аккаунт</button>
+        </div>
+      </div>
+
+      <div class="card settings">
         <h2>Данные</h2>
-        <p class="hint">Все данные хранятся локально в этом браузере (localStorage).</p>
+        <p class="hint">Резервная копия в файле JSON: её можно сохранить или загрузить обратно.</p>
         <div class="settings__actions">
           <button class="btn" id="exportBtn">Экспорт в JSON</button>
           <label class="btn">
@@ -459,6 +511,27 @@
       <div class="modal__actions">
         <button type="button" class="btn btn--ghost" data-close>Отмена</button>
         <button type="submit" class="btn btn--primary">Сохранить</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ===== Удаление аккаунта ===== -->
+  <div class="modal" id="deleteAccountModal" hidden>
+    <div class="modal__backdrop" data-close></div>
+    <form class="modal__dialog card" id="deleteAccountForm" novalidate>
+      <div class="card__head">
+        <h2>Удалить аккаунт?</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Закрыть">✕</button>
+      </div>
+      <p class="hint">Аккаунт и все данные будут удалены без возможности восстановления. Перед этим можно сделать экспорт в JSON.</p>
+      <label class="field">
+        <span>Введите пароль для подтверждения</span>
+        <input type="password" id="deletePassword" class="input" autocomplete="current-password">
+        <small class="error" data-error="password"></small>
+      </label>
+      <div class="modal__actions">
+        <button type="button" class="btn btn--ghost" data-close>Отмена</button>
+        <button type="submit" class="btn btn--danger">Удалить навсегда</button>
       </div>
     </form>
   </div>
