@@ -62,7 +62,10 @@ function el(tag, props = {}, children = []) {
   for (const [key, value] of Object.entries(props)) {
     if (key === 'class') node.className = value;
     else if (key === 'text') node.textContent = value;
-    else if (key === 'style') Object.assign(node.style, value);
+    else if (key === 'style') {
+      // setProperty нужен для CSS-переменных вида --name
+      Object.entries(value).forEach(([prop, v]) => node.style.setProperty(prop.startsWith('--') ? prop : prop.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()), v));
+    }
     else if (key === 'dataset') Object.assign(node.dataset, value);
     else node.setAttribute(key, value);
   }
@@ -111,6 +114,8 @@ function createDefaultState() {
   return {
     transactions: [],
     categories: DEFAULT_CATEGORIES.map((c) => ({ id: uid(), ...c })),
+    cards: [],
+    cardPayments: [],
     settings: { currency: 'UZS' },
   };
 }
@@ -122,11 +127,18 @@ function isValidState(data) {
     && data.settings && typeof data.settings === 'object';
 }
 
+/** Дополняет данные старых версий новыми полями (карты, погашения) */
+function normalizeState(data) {
+  if (!CURRENCIES[data.settings.currency]) data.settings.currency = 'UZS';
+  if (!Array.isArray(data.cards)) data.cards = [];
+  if (!Array.isArray(data.cardPayments)) data.cardPayments = [];
+  return data;
+}
+
 let state = (() => {
   const loaded = Storage.load();
   if (!isValidState(loaded)) return createDefaultState();
-  if (!CURRENCIES[loaded.settings.currency]) loaded.settings.currency = 'UZS';
-  return loaded;
+  return normalizeState(loaded);
 })();
 
 function commit() {
@@ -138,8 +150,10 @@ function commit() {
    CRUD
    ===================================================================== */
 const Transactions = {
-  create({ type, amount, categoryId, date, note }) {
-    const tx = { id: uid(), type, amount, categoryId, date, note: note || '', createdAt: Date.now() };
+  create({ type, amount, categoryId, date, note, cardId }) {
+    const tx = {
+      id: uid(), type, amount, categoryId, date, note: note || '', cardId: cardId || null, createdAt: Date.now(),
+    };
     state.transactions.push(tx);
     commit();
     return tx;
@@ -148,6 +162,8 @@ const Transactions = {
     let list = state.transactions.slice();
     if (filter.type && filter.type !== 'all') list = list.filter((t) => t.type === filter.type);
     if (filter.categoryId && filter.categoryId !== 'all') list = list.filter((t) => t.categoryId === filter.categoryId);
+    if (filter.cardId === 'none') list = list.filter((t) => !t.cardId);
+    else if (filter.cardId && filter.cardId !== 'all') list = list.filter((t) => t.cardId === filter.cardId);
     if (filter.from) list = list.filter((t) => t.date >= filter.from);
     if (filter.to) list = list.filter((t) => t.date <= filter.to);
     if (filter.search) {
@@ -224,6 +240,80 @@ const Categories = {
   },
 };
 
+/** Кредитные карты. Долг = покупки по карте − погашения */
+const Cards = {
+  create({ name, bank, last4, limit, dueDay, color }) {
+    const card = { id: uid(), name, bank: bank || '', last4: last4 || '', limit, dueDay: dueDay || null, color, createdAt: Date.now() };
+    state.cards.push(card);
+    commit();
+    return card;
+  },
+  read() {
+    return state.cards.slice();
+  },
+  get(id) {
+    return state.cards.find((c) => c.id === id);
+  },
+  update(id, changes) {
+    const card = this.get(id);
+    if (!card) return null;
+    Object.assign(card, changes);
+    commit();
+    return card;
+  },
+  /** Удаление карты: расходы остаются (без привязки к карте), погашения удаляются */
+  delete(id) {
+    state.transactions.forEach((t) => { if (t.cardId === id) t.cardId = null; });
+    state.cardPayments = state.cardPayments.filter((p) => p.cardId !== id);
+    state.cards = state.cards.filter((c) => c.id !== id);
+    commit();
+  },
+  spent(id) {
+    return state.transactions.filter((t) => t.type === 'expense' && t.cardId === id).reduce((s, t) => s + t.amount, 0);
+  },
+  repaid(id) {
+    return state.cardPayments.filter((p) => p.cardId === id).reduce((s, p) => s + p.amount, 0);
+  },
+  /** Текущая задолженность (отрицательное значение — переплата) */
+  debt(id) {
+    return this.spent(id) - this.repaid(id);
+  },
+  available(id) {
+    const card = this.get(id);
+    return card ? card.limit - Math.max(this.debt(id), 0) : 0;
+  },
+  usageCount(id) {
+    return state.transactions.filter((t) => t.cardId === id).length
+      + state.cardPayments.filter((p) => p.cardId === id).length;
+  },
+};
+
+const CardPayments = {
+  create({ cardId, amount, date, note }) {
+    const payment = { id: uid(), cardId, amount, date, note: note || '', createdAt: Date.now() };
+    state.cardPayments.push(payment);
+    commit();
+    return payment;
+  },
+  read(cardId) {
+    return state.cardPayments.filter((p) => !cardId || p.cardId === cardId);
+  },
+  get(id) {
+    return state.cardPayments.find((p) => p.id === id);
+  },
+  update(id, changes) {
+    const payment = this.get(id);
+    if (!payment) return null;
+    Object.assign(payment, changes);
+    commit();
+    return payment;
+  },
+  delete(id) {
+    state.cardPayments = state.cardPayments.filter((p) => p.id !== id);
+    commit();
+  },
+};
+
 const Settings = {
   read() {
     return { ...state.settings };
@@ -239,8 +329,7 @@ const Settings = {
   },
   importData(data) {
     if (!isValidState(data)) throw new Error('Неверный формат файла');
-    if (!CURRENCIES[data.settings.currency]) data.settings.currency = 'UZS';
-    state = data;
+    state = normalizeState(data);
     commit();
   },
 };
@@ -930,11 +1019,381 @@ function renderAnalytics() {
       `При текущем темпе расходы составят ~${formatMoneyShort(forecast)}, что на ${formatMoneyShort(forecast - prevAvgExpense)} больше среднего. До конца месяца стоит тратить не более ${formatMoneyShort(Math.max(prevAvgExpense - curTx.reduce((s, t) => s + t.amount, 0), 0) / Math.max(curDays - now.getDate(), 1))} в день.`);
   }
 
+  cardRecommendations(add);
+
   recs.sort((a, b) => REC_ORDER[a.level] - REC_ORDER[b.level]);
   $('#recList').replaceChildren(...recs.map((r) => el('li', { class: `rec rec--${r.level}` }, [
     el('span', { class: 'rec__icon', text: REC_ICONS[r.level] }),
     el('div', {}, [el('div', { class: 'rec__title', text: r.title }), el('div', { class: 'rec__text', text: r.text })]),
   ])));
+}
+
+/* =====================================================================
+   Рендер: Кредитные карты
+   ===================================================================== */
+const CARD_COLORS = ['#4f46e5', '#0ea5e9', '#0d9488', '#16a34a', '#f59e0b', '#ef4444', '#db2777', '#7c3aed', '#334155'];
+const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+
+let selectedCardId = null;
+
+/** Ближайшая дата платежа по карте и сколько до неё дней */
+function nextDueDate(dueDay) {
+  if (!dueDay) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const at = (y, m) => new Date(y, m, Math.min(dueDay, new Date(y, m + 1, 0).getDate()));
+  let date = at(today.getFullYear(), today.getMonth());
+  if (date < today) date = at(today.getFullYear(), today.getMonth() + 1);
+  return { date, days: Math.round((date - today) / 86400000) };
+}
+
+function dueText(due) {
+  const when = `${due.date.getDate()} ${MONTHS_GEN[due.date.getMonth()]}`;
+  if (due.days === 0) return `Платёж сегодня, ${when}`;
+  if (due.days === 1) return `Платёж завтра, ${when}`;
+  return `Платёж до ${when} · через ${due.days} дн.`;
+}
+
+function utilLevel(util) {
+  if (util >= 0.7) return 'high';
+  if (util >= 0.3) return 'mid';
+  return 'ok';
+}
+
+function cardStats(card) {
+  const debt = Cards.debt(card.id);
+  const used = Math.max(debt, 0);
+  return {
+    debt,
+    used,
+    available: card.limit - used,
+    util: card.limit > 0 ? used / card.limit : 0,
+    due: nextDueDate(card.dueDay),
+  };
+}
+
+function renderCards() {
+  const cards = Cards.read();
+  if (!Cards.get(selectedCardId)) selectedCardId = cards.length ? cards[0].id : null;
+
+  /* ---------- Итоги ---------- */
+  const monthKey = toISODate(new Date()).slice(0, 7);
+  const totals = cards.reduce((acc, c) => {
+    const s = cardStats(c);
+    acc.limit += c.limit;
+    acc.used += s.used;
+    acc.available += Math.max(s.available, 0);
+    return acc;
+  }, { limit: 0, used: 0, available: 0 });
+  const monthSpent = state.transactions
+    .filter((t) => t.type === 'expense' && t.cardId && Cards.get(t.cardId) && t.date.startsWith(monthKey))
+    .reduce((s, t) => s + t.amount, 0);
+  const util = totals.limit > 0 ? totals.used / totals.limit : 0;
+
+  setKpiText('ccLimit', formatMoneyShort(totals.limit), cards.length ? `${cards.length} ${cards.length === 1 ? 'карта' : cards.length < 5 ? 'карты' : 'карт'}` : 'карт пока нет');
+  setKpiText('ccDebt', formatMoneyShort(totals.used), `потрачено в этом месяце ${formatMoneyShort(monthSpent)}`);
+  setKpiText('ccAvailable', formatMoneyShort(totals.available), 'можно потратить');
+  setKpiText('ccUtil', formatPct(util), 'рекомендуется не больше 30%');
+  $('#ccUtil').style.color = { ok: 'var(--income)', mid: 'var(--warning)', high: 'var(--expense)' }[utilLevel(util)];
+
+  /* ---------- Карточки ---------- */
+  const grid = $('#ccGrid');
+  if (!cards.length) {
+    grid.replaceChildren(el('div', { class: 'card cc-empty' }, [
+      el('div', { class: 'cc-empty__icon', text: '💳' }),
+      el('h2', { text: 'Добавьте первую кредитную карту' }),
+      el('p', { class: 'hint', text: 'Укажите лимит и день платежа — трекер посчитает задолженность, доступный остаток и напомнит о платеже.' }),
+      el('button', { class: 'btn btn--primary', dataset: { action: 'add-card' } }, '+ Добавить карту'),
+    ]));
+  } else {
+    grid.replaceChildren(...cards.map((card) => {
+      const s = cardStats(card);
+      const level = utilLevel(s.util);
+      return el('article', {
+        class: `cc-card${card.id === selectedCardId ? ' is-selected' : ''}`,
+        style: { '--cc': card.color },
+        dataset: { action: 'select-card', id: card.id },
+        tabindex: '0',
+        'aria-label': `Карта ${cardLabel(card)}`,
+      }, [
+        el('div', { class: 'cc-card__top' }, [
+          el('div', {}, [
+            el('div', { class: 'cc-card__name', text: card.name }),
+            el('div', { class: 'cc-card__bank', text: card.bank || 'Кредитная карта' }),
+          ]),
+          el('div', { class: 'cc-card__actions' }, [
+            el('button', { class: 'icon-btn', title: 'Изменить', 'aria-label': 'Изменить карту', dataset: { action: 'edit-card', id: card.id } }, '✎'),
+            el('button', { class: 'icon-btn', title: 'Удалить', 'aria-label': 'Удалить карту', dataset: { action: 'delete-card', id: card.id } }, '🗑'),
+          ]),
+        ]),
+        el('div', { class: 'cc-card__number' }, [el('span', { class: 'cc-card__chip' }), card.last4 ? `•••• ${card.last4}` : '•••• ••••']),
+        el('div', { class: 'cc-card__debt' }, [
+          el('span', { class: 'cc-card__label', text: s.debt < 0 ? 'Переплата' : 'Задолженность' }),
+          el('span', { class: 'cc-card__amount', text: formatMoneyShort(Math.abs(s.debt)) }),
+          el('span', { class: 'cc-card__label', text: `из ${formatMoneyShort(card.limit)}` }),
+        ]),
+        el('div', { class: `cc-progress cc-progress--${level}`, title: `Использовано ${formatPct(s.util)}` },
+          el('span', { style: { width: `${Math.min(s.util, 1) * 100}%` } })),
+        el('div', { class: 'cc-card__row' }, [
+          el('span', { text: `Доступно ${formatMoneyShort(s.available)}` }),
+          el('span', { class: `cc-util cc-util--${level}`, text: formatPct(s.util) }),
+        ]),
+        el('div', { class: 'cc-card__row cc-card__foot' }, [
+          el('span', { class: s.due && s.used > 0 && s.due.days <= 5 ? 'cc-due cc-due--soon' : 'cc-due', text: s.due ? dueText(s.due) : 'День платежа не указан' }),
+          el('button', { class: 'btn cc-pay', dataset: { action: 'pay-card', id: card.id }, ...(s.used > 0 ? {} : { disabled: 'disabled' }) }, 'Погасить'),
+        ]),
+      ]);
+    }));
+  }
+
+  renderCardHistory();
+  renderCardsChart();
+}
+
+function renderCardHistory() {
+  const card = Cards.get(selectedCardId);
+  const body = $('#ccHistoryBody');
+  body.replaceChildren();
+  $('#ccHistoryTitle').textContent = card ? `История: ${cardLabel(card)}` : 'История по карте';
+  if (!card) {
+    $('#ccHistoryEmpty').hidden = false;
+    $('#ccHistoryEmpty').textContent = 'Добавьте карту, чтобы видеть траты и погашения';
+    return;
+  }
+
+  const rows = [
+    ...state.transactions.filter((t) => t.cardId === card.id && t.type === 'expense').map((t) => ({ kind: 'tx', item: t })),
+    ...CardPayments.read(card.id).map((p) => ({ kind: 'pay', item: p })),
+  ].sort((a, b) => b.item.date.localeCompare(a.item.date) || b.item.createdAt - a.item.createdAt);
+
+  rows.forEach(({ kind, item }) => {
+    const isPay = kind === 'pay';
+    const cat = !isPay && (Categories.get(item.categoryId) || { name: 'Без категории', color: '#94a3b8' });
+    body.append(el('tr', {}, [
+      el('td', { text: formatDate(item.date) }),
+      el('td', {}, [
+        el('span', { class: 'cat-cell' }, [
+          el('span', { class: 'dot', style: { background: isPay ? 'var(--income)' : cat.color } }),
+          isPay ? 'Погашение' : cat.name,
+        ]),
+        item.note ? el('div', { class: 'cc-note', text: item.note }) : null,
+      ]),
+      el('td', {
+        class: `num amount amount--${isPay ? 'income' : 'expense'}`,
+        text: formatMoney(isPay ? item.amount : -item.amount, { sign: true }),
+      }),
+      el('td', { class: 'actions' }, [
+        el('button', { class: 'icon-btn', title: 'Изменить', 'aria-label': 'Изменить', dataset: { action: isPay ? 'edit-payment' : 'edit-tx', id: item.id } }, '✎'),
+        el('button', { class: 'icon-btn icon-btn--danger', title: 'Удалить', 'aria-label': 'Удалить', dataset: { action: isPay ? 'delete-payment' : 'delete-tx', id: item.id } }, '🗑'),
+      ]),
+    ]));
+  });
+  $('#ccHistoryEmpty').hidden = rows.length > 0;
+  $('#ccHistoryEmpty').textContent = 'По этой карте пока нет операций';
+}
+
+function renderCardsChart() {
+  const t = chartTheme();
+  const labels = [];
+  const keys = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = monthStart(-i);
+    keys.push(toISODate(d).slice(0, 7));
+    labels.push(`${MONTHS_SHORT[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`);
+  }
+  const datasets = Cards.read().map((card) => ({
+    label: cardLabel(card),
+    data: keys.map((k) => state.transactions
+      .filter((tx) => tx.type === 'expense' && tx.cardId === card.id && tx.date.startsWith(k))
+      .reduce((s, tx) => s + tx.amount, 0)),
+    backgroundColor: card.color,
+    borderRadius: 6,
+    maxBarThickness: 34,
+  }));
+  const options = baseChartOptions();
+  options.scales.x.stacked = true;
+  options.scales.y.stacked = true;
+  options.plugins.legend.labels.color = t.text;
+  upsertChart('cards', 'chartCards', { type: 'bar', data: { labels, datasets }, options });
+}
+
+/* ---------- Общие функции модальных окон ---------- */
+function openModal(modalEl) {
+  modalEl.hidden = false;
+}
+
+function closeModal(modalEl) {
+  modalEl.hidden = true;
+}
+
+function clearFormErrors(formEl) {
+  formEl.querySelectorAll('.error').forEach((e) => { e.textContent = ''; });
+  formEl.querySelectorAll('.invalid').forEach((e) => e.classList.remove('invalid'));
+}
+
+function setFormError(formEl, field, input, message) {
+  formEl.querySelector(`[data-error="${field}"]`).textContent = message;
+  input.classList.add('invalid');
+}
+
+/* ---------- Окно карты (create / update) ---------- */
+function renderSwatches(selected) {
+  $('#cardSwatches').replaceChildren(...CARD_COLORS.map((color) => el('label', { class: 'swatch', title: color }, [
+    el('input', { type: 'radio', name: 'cardColor', value: color, ...(color === selected ? { checked: 'checked' } : {}) }),
+    el('span', { style: { background: color } }),
+  ])));
+}
+
+function openCardModal(id) {
+  const formEl = $('#cardForm');
+  clearFormErrors(formEl);
+  formEl.reset();
+  const card = id ? Cards.get(id) : null;
+  $('#cardModalTitle').textContent = card ? 'Редактировать карту' : 'Новая карта';
+  $('#cardId').value = card ? card.id : '';
+  $('#cardName').value = card ? card.name : '';
+  $('#cardBank').value = card ? card.bank : '';
+  $('#cardLast4').value = card ? card.last4 : '';
+  $('#cardLimit').value = card ? card.limit : '';
+  $('#cardDueDay').value = card && card.dueDay ? card.dueDay : '';
+  renderSwatches(card ? card.color : CARD_COLORS[state.cards.length % CARD_COLORS.length]);
+  openModal($('#cardModal'));
+  setTimeout(() => $('#cardName').focus(), 50);
+}
+
+function handleCardSubmit(e) {
+  e.preventDefault();
+  const formEl = $('#cardForm');
+  clearFormErrors(formEl);
+  const data = {
+    name: $('#cardName').value.trim(),
+    bank: $('#cardBank').value.trim(),
+    last4: $('#cardLast4').value.trim(),
+    limit: Number($('#cardLimit').value),
+    dueDay: $('#cardDueDay').value ? Number($('#cardDueDay').value) : null,
+    color: (formEl.querySelector('input[name="cardColor"]:checked') || { value: CARD_COLORS[0] }).value,
+  };
+
+  let valid = true;
+  if (!data.name) { setFormError(formEl, 'name', $('#cardName'), 'Введите название карты'); valid = false; }
+  if (data.last4 && !/^\d{4}$/.test(data.last4)) { setFormError(formEl, 'last4', $('#cardLast4'), 'Ровно 4 цифры'); valid = false; }
+  if (!Number.isFinite(data.limit) || data.limit <= 0) { setFormError(formEl, 'limit', $('#cardLimit'), 'Укажите лимит больше нуля'); valid = false; }
+  if (data.dueDay !== null && (!Number.isInteger(data.dueDay) || data.dueDay < 1 || data.dueDay > 31)) {
+    setFormError(formEl, 'dueDay', $('#cardDueDay'), 'Число от 1 до 31');
+    valid = false;
+  }
+  if (!valid) return;
+
+  const id = $('#cardId').value;
+  if (id) {
+    Cards.update(id, data);
+    toast('Карта обновлена');
+  } else {
+    selectedCardId = Cards.create(data).id;
+    render();
+    toast('Карта добавлена');
+  }
+  closeModal($('#cardModal'));
+}
+
+/* ---------- Окно погашения (create / update) ---------- */
+/** Задолженность по карте без учёта редактируемого погашения */
+function payDebtFor(cardId) {
+  const editing = CardPayments.get($('#payId').value);
+  const own = editing && editing.cardId === cardId ? editing.amount : 0;
+  return Math.max(Cards.debt(cardId) + own, 0);
+}
+
+function updatePayHint() {
+  const cardId = $('#payCard').value;
+  $('#payCardHint').textContent = Cards.get(cardId) ? `Задолженность: ${formatMoney(payDebtFor(cardId))}` : '';
+}
+
+function openPayModal({ id, cardId } = {}) {
+  if (!state.cards.length) {
+    toast('Сначала добавьте кредитную карту');
+    return;
+  }
+  const formEl = $('#payForm');
+  clearFormErrors(formEl);
+  formEl.reset();
+  const payment = id ? CardPayments.get(id) : null;
+  $('#payModalTitle').textContent = payment ? 'Редактировать погашение' : 'Погашение задолженности';
+  $('#payId').value = payment ? payment.id : '';
+  $('#payCard').replaceChildren(...Cards.read().map((c) => el('option', { value: c.id }, `💳 ${cardLabel(c)}`)));
+  // По умолчанию — выбранная карта или карта с наибольшим долгом
+  const fallback = Cards.read().sort((a, b) => Cards.debt(b.id) - Cards.debt(a.id))[0].id;
+  $('#payCard').value = payment ? payment.cardId : (cardId || (Cards.get(selectedCardId) && Cards.debt(selectedCardId) > 0 ? selectedCardId : fallback));
+  $('#payAmount').value = payment ? payment.amount : '';
+  $('#payDate').value = payment ? payment.date : toISODate(new Date());
+  $('#payNote').value = payment ? payment.note : '';
+  updatePayHint();
+  openModal($('#payModal'));
+  setTimeout(() => $('#payAmount').focus(), 50);
+}
+
+function handlePaySubmit(e) {
+  e.preventDefault();
+  const formEl = $('#payForm');
+  clearFormErrors(formEl);
+  const data = {
+    cardId: $('#payCard').value,
+    amount: Number($('#payAmount').value),
+    date: $('#payDate').value,
+    note: $('#payNote').value.trim(),
+  };
+
+  let valid = true;
+  if (!Cards.get(data.cardId)) { setFormError(formEl, 'card', $('#payCard'), 'Выберите карту'); valid = false; }
+  const debt = Cards.get(data.cardId) ? payDebtFor(data.cardId) : 0;
+  if (!Number.isFinite(data.amount) || data.amount <= 0) {
+    setFormError(formEl, 'amount', $('#payAmount'), 'Введите сумму больше нуля');
+    valid = false;
+  } else if (valid && data.amount > debt) {
+    setFormError(formEl, 'amount', $('#payAmount'), `Сумма больше задолженности (${formatMoney(debt)})`);
+    valid = false;
+  }
+  if (!data.date) { setFormError(formEl, 'date', $('#payDate'), 'Укажите дату'); valid = false; }
+  if (!valid) return;
+
+  const id = $('#payId').value;
+  if (id) {
+    CardPayments.update(id, data);
+    toast('Погашение обновлено');
+  } else {
+    CardPayments.create(data);
+    toast('Задолженность погашена');
+  }
+  closeModal($('#payModal'));
+}
+
+/** Рекомендации по кредитным картам для вкладки «Аналитика» */
+function cardRecommendations(add) {
+  const cards = Cards.read().filter((c) => c.limit > 0);
+  if (!cards.length) return;
+  let allGood = true;
+  cards.forEach((card) => {
+    const s = cardStats(card);
+    const label = cardLabel(card);
+    if (s.util >= 0.9) {
+      allGood = false;
+      add('danger', `Лимит карты «${label}» почти исчерпан`,
+        `Использовано ${formatPct(s.util)} лимита, доступно лишь ${formatMoneyShort(s.available)}. Не пользуйтесь картой до погашения, чтобы избежать отказов и штрафов.`);
+    } else if (s.util > 0.3) {
+      allGood = false;
+      add('warning', `Высокая загрузка карты «${label}»`,
+        `Использовано ${formatPct(s.util)} лимита. Банки и кредитные бюро советуют держать не больше 30% — погасите ${formatMoneyShort(s.used - card.limit * 0.3)}, чтобы вернуться в норму.`);
+    }
+    if (s.due && s.used > 0 && s.due.days <= 5) {
+      allGood = false;
+      add('warning', `Скоро платёж по карте «${label}»`,
+        `${dueText(s.due)}. Задолженность — ${formatMoneyShort(s.used)}. Внесите хотя бы минимальный платёж, чтобы не платить штраф и проценты.`);
+    }
+  });
+  if (allGood) {
+    add('good', 'Кредитные карты под контролем',
+      'Загрузка всех карт не выше 30%, ближайшие платежи не горят. Так кредитная история остаётся хорошей.');
+  }
 }
 
 /* =====================================================================
@@ -944,6 +1403,7 @@ function readFilters() {
   return {
     type: $('#fType').value,
     categoryId: $('#fCategory').value,
+    cardId: $('#fCard').value,
     from: $('#fFrom').value || null,
     to: $('#fTo').value || null,
     search: $('#fSearch').value.trim(),
@@ -963,20 +1423,40 @@ function fillCategoryFilter() {
   select.value = Categories.get(current) ? current : 'all';
 }
 
+function cardLabel(card) {
+  return card.last4 ? `${card.name} ••${card.last4}` : card.name;
+}
+
+function fillCardFilter() {
+  const select = $('#fCard');
+  const current = select.value;
+  select.replaceChildren(
+    el('option', { value: 'all' }, 'Любая оплата'),
+    el('option', { value: 'none' }, 'Без кредитной карты'),
+    ...Cards.read().map((c) => el('option', { value: c.id }, `💳 ${cardLabel(c)}`)),
+  );
+  select.value = current === 'none' || Cards.get(current) ? current : 'all';
+}
+
 function renderTransactions() {
   fillCategoryFilter();
+  fillCardFilter();
   const list = Transactions.read(readFilters());
   const body = $('#txBody');
   body.replaceChildren();
 
   list.forEach((tx) => {
     const cat = Categories.get(tx.categoryId) || { name: 'Без категории', color: '#94a3b8' };
+    const card = tx.cardId && Cards.get(tx.cardId);
     body.append(el('tr', {}, [
       el('td', { text: formatDate(tx.date) }),
-      el('td', {}, el('span', { class: 'cat-cell' }, [
-        el('span', { class: 'dot', style: { background: cat.color } }),
-        cat.name,
-      ])),
+      el('td', {}, [
+        el('span', { class: 'cat-cell' }, [
+          el('span', { class: 'dot', style: { background: cat.color } }),
+          cat.name,
+        ]),
+        card ? el('span', { class: 'card-chip', style: { '--chip': card.color }, text: `💳 ${cardLabel(card)}` }) : null,
+      ]),
       el('td', { class: 'note', text: tx.note || '—', title: tx.note }),
       el('td', {
         class: `num amount amount--${tx.type}`,
@@ -1047,7 +1527,7 @@ function renderSettings() {
 /* =====================================================================
    Навигация и общий рендер
    ===================================================================== */
-const TABS = ['dashboard', 'analytics', 'transactions', 'categories', 'settings'];
+const TABS = ['dashboard', 'analytics', 'cards', 'transactions', 'categories', 'settings'];
 
 function currentTab() {
   const hash = location.hash.slice(1);
@@ -1059,9 +1539,11 @@ function render() {
   TABS.forEach((name) => { $(`#tab-${name}`).hidden = name !== tab; });
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   $('#txCurrencyLabel').textContent = CURRENCIES[state.settings.currency].symbol;
+  $$('.currency-label').forEach((n) => { n.textContent = CURRENCIES[state.settings.currency].symbol; });
 
   if (tab === 'dashboard') renderDashboard();
   if (tab === 'analytics') renderAnalytics();
+  if (tab === 'cards') renderCards();
   if (tab === 'transactions') renderTransactions();
   if (tab === 'categories') renderCategories();
   if (tab === 'settings') renderSettings();
@@ -1114,6 +1596,34 @@ function fillTxCategories(type, selectedId) {
   if (selectedId && Categories.get(selectedId)) select.value = selectedId;
 }
 
+/** Способ оплаты доступен только для расходов */
+function fillTxCards(type, selectedId) {
+  const field = $('#txCardField');
+  const cards = Cards.read();
+  field.hidden = type !== 'expense' || cards.length === 0;
+  const select = $('#txCard');
+  select.replaceChildren(
+    el('option', { value: '' }, 'Наличные / дебетовая карта'),
+    ...cards.map((c) => el('option', { value: c.id }, `💳 ${cardLabel(c)}`)),
+  );
+  select.value = selectedId && Cards.get(selectedId) ? selectedId : '';
+  updateTxCardHint();
+}
+
+/** Сколько ещё можно потратить по выбранной карте (с учётом редактируемой операции) */
+function txCardAvailable() {
+  const card = Cards.get($('#txCard').value);
+  if (!card) return null;
+  const editing = Transactions.get($('#txId').value);
+  const own = editing && editing.cardId === card.id && editing.type === 'expense' ? editing.amount : 0;
+  return Cards.available(card.id) + own;
+}
+
+function updateTxCardHint() {
+  const available = txCardAvailable();
+  $('#txCardHint').textContent = available === null ? '' : `Доступно по карте: ${formatMoney(available)}`;
+}
+
 function clearErrors() {
   form.querySelectorAll('.error').forEach((e) => { e.textContent = ''; });
   form.querySelectorAll('.invalid').forEach((e) => e.classList.remove('invalid'));
@@ -1129,6 +1639,7 @@ function openTxModal(id) {
   $('#txId').value = tx ? tx.id : '';
   form.querySelector(`input[name="txType"][value="${type}"]`).checked = true;
   fillTxCategories(type, tx && tx.categoryId);
+  fillTxCards(type, tx && tx.cardId);
   $('#txAmount').value = tx ? tx.amount : '';
   $('#txDate').value = tx ? tx.date : toISODate(new Date());
   $('#txNote').value = tx ? tx.note : '';
@@ -1157,10 +1668,14 @@ function handleTxSubmit(e) {
     date: $('#txDate').value,
     note: $('#txNote').value.trim(),
   };
+  data.cardId = data.type === 'expense' && Cards.get($('#txCard').value) ? $('#txCard').value : null;
 
   let valid = true;
   if (!data.amount || !Number.isFinite(data.amount) || data.amount <= 0) {
     showError('amount', '#txAmount', 'Введите сумму больше нуля');
+    valid = false;
+  } else if (data.cardId && data.amount > txCardAvailable()) {
+    showError('card', '#txCard', `Сумма превышает доступный лимит карты (${formatMoney(txCardAvailable())})`);
     valid = false;
   }
   if (!data.categoryId || !Categories.get(data.categoryId)) {
@@ -1205,6 +1720,31 @@ function bindEvents() {
       toast('Операция удалена');
     }
 
+    if (action === 'add-card') openCardModal();
+    if (action === 'edit-card') openCardModal(id);
+    if (action === 'select-card') {
+      selectedCardId = id;
+      renderCards();
+    }
+    if (action === 'delete-card') {
+      const card = Cards.get(id);
+      if (!card) return;
+      const count = Cards.usageCount(id);
+      const msg = count
+        ? `Удалить карту «${cardLabel(card)}»? Расходы останутся в операциях, но без привязки к карте, а погашения будут удалены.`
+        : `Удалить карту «${cardLabel(card)}»?`;
+      if (!confirm(msg)) return;
+      Cards.delete(id);
+      toast('Карта удалена');
+    }
+    if (action === 'add-payment') openPayModal();
+    if (action === 'pay-card') openPayModal({ cardId: id });
+    if (action === 'edit-payment') openPayModal({ id });
+    if (action === 'delete-payment' && confirm('Удалить это погашение? Задолженность по карте увеличится.')) {
+      CardPayments.delete(id);
+      toast('Погашение удалено');
+    }
+
     if (action === 'edit-cat') {
       const c = Categories.get(id);
       if (!c) return;
@@ -1234,13 +1774,39 @@ function bindEvents() {
 
   // Модалка
   form.addEventListener('submit', handleTxSubmit);
-  modal.querySelectorAll('[data-close]').forEach((n) => n.addEventListener('click', closeTxModal));
+  $$('.modal').forEach((m) => m.querySelectorAll('[data-close]').forEach((n) => n.addEventListener('click', () => closeModal(m))));
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !modal.hidden) closeTxModal();
+    if (e.key !== 'Escape') return;
+    const opened = [...$$('.modal')].reverse().find((m) => !m.hidden);
+    if (opened) closeModal(opened);
+  });
+
+  // Карты и погашения
+  $('#cardForm').addEventListener('submit', handleCardSubmit);
+  $('#payForm').addEventListener('submit', handlePaySubmit);
+  $('#payCard').addEventListener('change', updatePayHint);
+  $('#payFull').addEventListener('click', () => {
+    const cardId = $('#payCard').value;
+    if (Cards.get(cardId)) $('#payAmount').value = payDebtFor(cardId);
+  });
+  $('#cardLast4').addEventListener('input', (e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); });
+  // Выбор карты с клавиатуры
+  $('#ccGrid').addEventListener('keydown', (e) => {
+    const cardEl = e.target.closest('.cc-card');
+    if (cardEl && e.target === cardEl && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      selectedCardId = cardEl.dataset.id;
+      renderCards();
+      $(`.cc-card[data-id="${selectedCardId}"]`).focus();
+    }
   });
   form.querySelectorAll('input[name="txType"]').forEach((r) => {
-    r.addEventListener('change', () => fillTxCategories(getFormType()));
+    r.addEventListener('change', () => {
+      fillTxCategories(getFormType());
+      fillTxCards(getFormType(), $('#txCard').value);
+    });
   });
+  $('#txCard').addEventListener('change', updateTxCardHint);
 
   // Дэшборд
   $('#periodSelect').addEventListener('change', renderDashboard);
@@ -1252,13 +1818,14 @@ function bindEvents() {
   });
 
   // Фильтры операций
-  ['#fType', '#fCategory', '#fFrom', '#fTo', '#fSort'].forEach((sel) => {
+  ['#fType', '#fCategory', '#fCard', '#fFrom', '#fTo', '#fSort'].forEach((sel) => {
     $(sel).addEventListener('change', renderTransactions);
   });
   $('#fSearch').addEventListener('input', renderTransactions);
   $('#fReset').addEventListener('click', () => {
     $('#fType').value = 'all';
     $('#fCategory').value = 'all';
+    $('#fCard').value = 'all';
     $('#fFrom').value = '';
     $('#fTo').value = '';
     $('#fSearch').value = '';

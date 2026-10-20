@@ -13,6 +13,7 @@
       <nav class="nav" id="nav">
         <a href="#dashboard" data-tab="dashboard">Дэшборд</a>
         <a href="#analytics" data-tab="analytics">Аналитика</a>
+        <a href="#cards" data-tab="cards">Карты</a>
         <a href="#transactions" data-tab="transactions">Операции</a>
         <a href="#categories" data-tab="categories">Категории</a>
         <a href="#settings" data-tab="settings">Настройки</a>
@@ -139,6 +140,69 @@
       </div>
     </section>
 
+    <!-- ===== Кредитные карты ===== -->
+    <section class="tab" id="tab-cards" hidden>
+      <div class="toolbar">
+        <div>
+          <h1>Кредитные карты</h1>
+          <p class="hint">Траты по картам, задолженность и доступный лимит</p>
+        </div>
+        <div class="toolbar__actions">
+          <button class="btn" data-action="add-payment">Погасить долг</button>
+          <button class="btn btn--primary" data-action="add-card">+ Добавить карту</button>
+        </div>
+      </div>
+
+      <div class="kpi kpi--4">
+        <div class="card kpi__item kpi__item--balance">
+          <div class="kpi__label">Общий лимит</div>
+          <div class="kpi__value" id="ccLimit">—</div>
+          <div class="kpi__sub" id="ccLimitSub"></div>
+        </div>
+        <div class="card kpi__item kpi__item--expense">
+          <div class="kpi__label">Задолженность</div>
+          <div class="kpi__value" id="ccDebt">—</div>
+          <div class="kpi__sub" id="ccDebtSub"></div>
+        </div>
+        <div class="card kpi__item kpi__item--income">
+          <div class="kpi__label">Доступно</div>
+          <div class="kpi__value" id="ccAvailable">—</div>
+          <div class="kpi__sub" id="ccAvailableSub"></div>
+        </div>
+        <div class="card kpi__item kpi__item--forecast">
+          <div class="kpi__label">Использование лимита</div>
+          <div class="kpi__value" id="ccUtil">—</div>
+          <div class="kpi__sub" id="ccUtilSub"></div>
+        </div>
+      </div>
+
+      <div class="cc-grid" id="ccGrid"></div>
+
+      <div class="cc-columns">
+        <div class="card table-wrap cc-history">
+          <div class="card__head table-title">
+            <h2 id="ccHistoryTitle">История по карте</h2>
+          </div>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Описание</th>
+                <th class="num">Сумма</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="ccHistoryBody"></tbody>
+          </table>
+          <p class="empty" id="ccHistoryEmpty" hidden>По этой карте пока нет операций</p>
+        </div>
+        <div class="card chart-card">
+          <h2>Траты по картам за 6 месяцев</h2>
+          <div class="chart-box"><canvas id="chartCards"></canvas></div>
+        </div>
+      </div>
+    </section>
+
     <!-- ===== Операции ===== -->
     <section class="tab" id="tab-transactions" hidden>
       <div class="toolbar">
@@ -154,6 +218,9 @@
         </select>
         <select id="fCategory" class="input" aria-label="Категория">
           <option value="all">Все категории</option>
+        </select>
+        <select id="fCard" class="input" aria-label="Способ оплаты">
+          <option value="all">Любая оплата</option>
         </select>
         <input type="date" id="fFrom" class="input" aria-label="С даты">
         <input type="date" id="fTo" class="input" aria-label="По дату">
@@ -272,6 +339,13 @@
         <small class="error" data-error="category"></small>
       </label>
 
+      <label class="field" id="txCardField">
+        <span>Способ оплаты</span>
+        <select id="txCard" class="input"></select>
+        <small class="hint" id="txCardHint"></small>
+        <small class="error" data-error="card"></small>
+      </label>
+
       <label class="field">
         <span>Дата</span>
         <input type="date" id="txDate" class="input">
@@ -282,6 +356,105 @@
         <span>Заметка</span>
         <input type="text" id="txNote" class="input" maxlength="120" placeholder="Необязательно">
       </label>
+
+      <div class="modal__actions">
+        <button type="button" class="btn btn--ghost" data-close>Отмена</button>
+        <button type="submit" class="btn btn--primary">Сохранить</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ===== Модальное окно карты ===== -->
+  <div class="modal" id="cardModal" hidden>
+    <div class="modal__backdrop" data-close></div>
+    <form class="modal__dialog card" id="cardForm" novalidate>
+      <div class="card__head">
+        <h2 id="cardModalTitle">Новая карта</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Закрыть">✕</button>
+      </div>
+      <input type="hidden" id="cardId">
+
+      <label class="field">
+        <span>Название карты</span>
+        <input type="text" id="cardName" class="input" maxlength="30" placeholder="Например, Visa Gold">
+        <small class="error" data-error="name"></small>
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Банк</span>
+          <input type="text" id="cardBank" class="input" maxlength="30" placeholder="Необязательно">
+        </label>
+        <label class="field">
+          <span>Последние 4 цифры</span>
+          <input type="text" id="cardLast4" class="input" maxlength="4" inputmode="numeric" placeholder="1234">
+          <small class="error" data-error="last4"></small>
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Кредитный лимит, <b class="currency-label">сум</b></span>
+          <input type="number" id="cardLimit" class="input" min="0" step="any" inputmode="decimal" placeholder="0">
+          <small class="error" data-error="limit"></small>
+        </label>
+        <label class="field">
+          <span>День платежа</span>
+          <input type="number" id="cardDueDay" class="input" min="1" max="31" inputmode="numeric" placeholder="Например, 25">
+          <small class="error" data-error="dueDay"></small>
+        </label>
+      </div>
+
+      <div class="field">
+        <span>Цвет карты</span>
+        <div class="swatches" id="cardSwatches"></div>
+      </div>
+
+      <p class="hint">Храните только последние 4 цифры — полный номер карты здесь не нужен.</p>
+
+      <div class="modal__actions">
+        <button type="button" class="btn btn--ghost" data-close>Отмена</button>
+        <button type="submit" class="btn btn--primary">Сохранить</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ===== Модальное окно погашения ===== -->
+  <div class="modal" id="payModal" hidden>
+    <div class="modal__backdrop" data-close></div>
+    <form class="modal__dialog card" id="payForm" novalidate>
+      <div class="card__head">
+        <h2 id="payModalTitle">Погашение задолженности</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Закрыть">✕</button>
+      </div>
+      <input type="hidden" id="payId">
+
+      <label class="field">
+        <span>Карта</span>
+        <select id="payCard" class="input"></select>
+        <small class="hint" id="payCardHint"></small>
+        <small class="error" data-error="card"></small>
+      </label>
+
+      <label class="field">
+        <span>Сумма, <b class="currency-label">сум</b></span>
+        <input type="number" id="payAmount" class="input" min="0" step="any" inputmode="decimal" placeholder="0">
+        <small class="error" data-error="amount"></small>
+      </label>
+      <button type="button" class="link link-btn" id="payFull">Погасить всю задолженность</button>
+
+      <label class="field">
+        <span>Дата</span>
+        <input type="date" id="payDate" class="input">
+        <small class="error" data-error="date"></small>
+      </label>
+
+      <label class="field">
+        <span>Заметка</span>
+        <input type="text" id="payNote" class="input" maxlength="120" placeholder="Необязательно">
+      </label>
+
+      <p class="hint">Погашение уменьшает долг по карте, но не считается расходом: покупки уже учтены.</p>
 
       <div class="modal__actions">
         <button type="button" class="btn btn--ghost" data-close>Отмена</button>

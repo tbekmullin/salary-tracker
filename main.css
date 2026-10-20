@@ -494,6 +494,200 @@ h2 { font-size: 16px; margin: 0 0 12px; font-weight: 600; }
 .badge--up { background: var(--expense-soft); color: var(--expense); }
 .badge--down { background: var(--income-soft); color: var(--income); }
 
+/* ========== Кредитные карты ========== */
+.cc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.cc-card {
+  --cc: #4f46e5;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border-radius: var(--radius);
+  color: #fff;
+  cursor: pointer;
+  overflow: hidden;
+  isolation: isolate;
+  /* Цвет карты + стеклянный блик */
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(255, 255, 255, .28), transparent 55%),
+    linear-gradient(135deg, var(--cc), color-mix(in srgb, var(--cc) 55%, #0b0e1c));
+  border: 1px solid rgba(255, 255, 255, .35);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--cc) 35%, transparent), inset 0 1px 0 rgba(255, 255, 255, .35);
+  transition: transform .25s cubic-bezier(.2, .8, .2, 1), box-shadow .25s;
+}
+
+.cc-card::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 220px;
+  height: 220px;
+  right: -70px;
+  bottom: -110px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .12);
+}
+
+.cc-card:hover { transform: translateY(-3px); }
+.cc-card:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+
+.cc-card.is-selected {
+  box-shadow: 0 0 0 3px var(--bg-solid), 0 0 0 6px var(--cc), 0 14px 36px color-mix(in srgb, var(--cc) 40%, transparent);
+}
+
+.cc-card__top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.cc-card__name { font-weight: 700; font-size: 17px; }
+.cc-card__bank { font-size: 13px; opacity: .8; }
+
+.cc-card__actions { display: flex; gap: 2px; }
+.cc-card .icon-btn { color: rgba(255, 255, 255, .85); }
+.cc-card .icon-btn:hover { background: rgba(255, 255, 255, .2); color: #fff; }
+
+.cc-card__number {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 16px;
+  letter-spacing: .12em;
+}
+
+.cc-card__chip {
+  width: 34px;
+  height: 25px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #fde68a, #d97706);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .15);
+}
+
+.cc-card__debt { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+.cc-card__label { font-size: 13px; opacity: .8; }
+.cc-card__amount { font-size: 24px; font-weight: 700; white-space: nowrap; }
+
+.cc-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .25);
+  overflow: hidden;
+}
+
+.cc-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width .4s cubic-bezier(.2, .8, .2, 1);
+}
+
+.cc-progress--ok > span { background: #86efac; }
+.cc-progress--mid > span { background: #fcd34d; }
+.cc-progress--high > span { background: #fca5a5; }
+
+.cc-card__row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; }
+
+.cc-util {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, .2);
+}
+
+.cc-card__foot { margin-top: 2px; }
+.cc-due { opacity: .9; }
+.cc-due--soon { opacity: 1; font-weight: 600; color: #fde68a; }
+
+.cc-pay {
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, .22);
+  border-color: rgba(255, 255, 255, .4);
+  color: #fff;
+}
+
+.cc-pay:hover { background: rgba(255, 255, 255, .35); }
+.cc-pay:disabled { opacity: .5; cursor: default; }
+
+.cc-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 32px 18px;
+  margin: 0;
+}
+
+.cc-empty__icon { font-size: 40px; }
+.cc-empty .hint { max-width: 420px; margin: 0 auto 16px; }
+
+.cc-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.card-chip {
+  display: inline-block;
+  margin: 4px 0 0 18px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--text);
+  background: color-mix(in srgb, var(--chip, #64748b) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chip, #64748b) 35%, transparent);
+}
+
+.muted { color: var(--muted); }
+
+.cc-note { margin: 2px 0 0 18px; font-size: 12px; color: var(--muted); }
+
+.cc-history { max-height: 560px; overflow-y: auto; }
+.cc-history thead th { position: sticky; top: 0; z-index: 1; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+
+/* ========== Поля форм карт ========== */
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch { cursor: pointer; }
+.swatch input { position: absolute; opacity: 0; pointer-events: none; }
+
+.swatch span {
+  display: block;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .8);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .15);
+  transition: transform .15s, box-shadow .15s;
+}
+
+.swatch input:checked + span {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 3px var(--bg-solid), 0 0 0 5px var(--primary);
+}
+
+.swatch input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 3px; }
+
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: -6px 0 14px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.link-btn:hover { text-decoration: underline; }
+
 /* ========== Графики ========== */
 .charts {
   display: grid;
@@ -752,7 +946,8 @@ h2 { font-size: 16px; margin: 0 0 12px; font-weight: 600; }
 @media (max-width: 860px) {
   .charts,
   .cat-columns,
-  .an-columns { grid-template-columns: minmax(0, 1fr); }
+  .an-columns,
+  .cc-columns { grid-template-columns: minmax(0, 1fr); }
   .kpi--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cat-form { grid-template-columns: 1fr 1fr; }
   .cat-form #catName { grid-column: 1 / -1; order: -1; }
@@ -768,4 +963,6 @@ h2 { font-size: 16px; margin: 0 0 12px; font-weight: 600; }
   .toolbar__actions > * { flex: 1 1 auto; }
   .table th, .table td { padding: 10px; }
   .table .note { display: none; }
+  .cc-grid { grid-template-columns: minmax(0, 1fr); }
+  .field-row { grid-template-columns: minmax(0, 1fr); gap: 0; }
 }
